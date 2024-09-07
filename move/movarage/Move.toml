@@ -1,0 +1,17 @@
+[package]
+name = "movarage"
+version = "1.0.0"
+authors = []
+
+[addresses]
+movarage = "_"
+aggregator_caller = "_"
+
+[dev-addresses]
+
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework", rev = "mainnet" }
+mosaic = { local = "../movarage-protocols/mosaic" }
+simple_lending = { local = "../simple-lending" }
+
+[dev-dependencies]
