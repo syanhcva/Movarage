@@ -4,6 +4,7 @@ version = "1.0.0"
 authors = []
 
 [addresses]
+#simple_lending = "0xa0fd52f02567234b1a743e823214c81d659090de1eb3da5e305114fdaa76159e"
 simple_lending = "_"
 
 [dev-addresses]

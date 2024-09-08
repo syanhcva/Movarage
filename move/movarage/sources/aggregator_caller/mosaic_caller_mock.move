@@ -2,9 +2,9 @@
 // When running tests please uncomment line 5 and comment line 6 & 7. 
 // Remember to update the real module file, mosaic.move file in the same folder -> rename file
 // to mosaic.move1 to ignore real module.
-// module aggregator_caller::mosaic {
+// module movarage::mosaic_caller {
 #[test_only]
-module aggregator_caller::mosaic_mock {
+module movarage::mosaic_caller_mock {
     friend movarage::perp;
 
     use std::signer;
@@ -26,7 +26,7 @@ module aggregator_caller::mosaic_mock {
     }
 
     public fun initialize_for_test(source: &signer) {
-        assert!(signer::address_of(source) == @aggregator_caller, 42);
+        assert!(signer::address_of(source) == @movarage, 42);
 
         let (_, resource_signer_cap) = account::create_resource_account(source, b"mosaic_caller");
         move_to(source, MosaicCaller {
@@ -35,7 +35,7 @@ module aggregator_caller::mosaic_mock {
     }
 
     public fun set_swap_rate<SourceToken, TargetToken>(rate_bips: u64) acquires MosaicCaller {
-        let resource_signer_cap = &borrow_global<MosaicCaller>(@aggregator_caller).resource_signer_cap;
+        let resource_signer_cap = &borrow_global<MosaicCaller>(@movarage).resource_signer_cap;
         let resource_signer = account::create_signer_with_capability(resource_signer_cap);
 
         move_to(&resource_signer, TokenSwapRate<SourceToken, TargetToken> {
@@ -61,7 +61,7 @@ module aggregator_caller::mosaic_mock {
         amount_out_usd: String,
     ): u64 
     acquires MosaicCaller, TokenSwapRate {
-        let resource_signer_cap = &borrow_global<MosaicCaller>(@aggregator_caller).resource_signer_cap;
+        let resource_signer_cap = &borrow_global<MosaicCaller>(@movarage).resource_signer_cap;
 
         aptos_account::transfer_coins<X>(sender, account::get_signer_capability_address(resource_signer_cap), amount_in);
 

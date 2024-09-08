@@ -2,6 +2,7 @@
 module movarage::test_perp {
     use std::signer;
     use std::string::{Self, String};
+    use std::timestamp;
     use std::vector;
 
     use aptos_framework::account;
@@ -11,7 +12,7 @@ module movarage::test_perp {
     use aptos_framework::type_info;
 
     use movarage::perp;
-    use aggregator_caller::mosaic as mosaic_caller;
+    use movarage::mosaic_caller;
     use simple_lending::lending;
 
     struct MoveCoin {}
@@ -23,26 +24,16 @@ module movarage::test_perp {
         usdc_mint_cap: MintCapability<USDC>,
     }
 
-    #[test(aptos_framework = @aptos_framework, source = @movarage, simple_lending = @simple_lending, user = @0x100)]
-    public fun test_get_max_leverage_level(
-        aptos_framework: &signer, 
-        source: &signer,
-        simple_lending: &signer,
-        user: &signer,
-    ) {
-        setup_test(aptos_framework, source, simple_lending, user);
-        assert!(perp::get_max_leverage_level() == 5, 42);
-    }
-
-    #[test(aptos_framework = @aptos_framework, source = @movarage, simple_lending = @simple_lending, user = @0x100, fee_recipient = @0x101)]
+    #[test(aptos_framework = @aptos_framework, source = @movarage, simple_lending = @simple_lending, user = @0x100, fee_recipient = @0x101, interest_recipient = @102)]
     public fun test_happy_case(
         aptos_framework: &signer, 
         source: &signer,
         simple_lending: &signer,
         user: &signer,
         fee_recipient: &signer,
+        interest_recipient: &signer,
     ) acquires CoinsCap {
-        setup_test(aptos_framework, source, simple_lending, user);
+        setup_test(aptos_framework, source, simple_lending, user, interest_recipient);
 
         mint_move_to_account(&lending::get_resource_signer(), 1_000_000_000); // 10 move
         mint_move_to_account(user, 200_000_000); // 2 move
@@ -53,6 +44,7 @@ module movarage::test_perp {
         //==================================================================
         //                      OPEN POSITION
         //==================================================================
+        timestamp::update_global_time_for_test_secs(1704085200);
         perp::open_position_with_mosaic<MoveCoin, USDC, USDC,
                                         MoveCoin, USDC,
                                         MoveCoin, USDC,
@@ -60,30 +52,48 @@ module movarage::test_perp {
         >(
             user,
             100_000_000, // 1 move
-            5,
+            50, // x5
             vector::empty(), vector::empty(), vector::empty(),
             vector::empty(), vector::empty(), vector::empty(),
             vector::empty(), vector::empty(), vector::empty(),
             signer::address_of(fee_recipient), 0,
-            500_000_000, 400_000_000,
+            400_000_000,
             string::utf8(b"10"), string::utf8(b"10"),
         );
 
         // assert opened position data
+        timestamp::update_global_time_for_test_secs(1704085201); // 1s after opened position
         let user_open_position_ids = perp::get_user_open_position_ids(signer::address_of(user));
         assert!(vector::length(&user_open_position_ids) == 1, 42);
         assert!(*vector::borrow(&user_open_position_ids, 0) == 1, 42);
+        let user_closed_position_ids = perp::get_user_closed_position_ids(signer::address_of(user));
+        assert!(vector::length(&user_closed_position_ids) == 0, 42);
         let (
+            _,
+            user_address,
             source_token_type_name, 
             target_token_type_name,
             leverage_level,
-            user_amount,
+            user_paid_amount,
+            borrow_amount,
+            deposit_amount,
             is_closed,
-        ) = perp::get_position_details(1);
+            opened_at,
+            closed_at,
+            _,
+            interest_accrued_amount,
+        ) = perp::extract_position(perp::get_position_details(1));
+        assert!(user_address == signer::address_of(user), 42);
         assert!(source_token_type_name == type_info::type_name<MoveCoin>(), 42);
         assert!(target_token_type_name == type_info::type_name<USDC>(), 42);
-        assert!(leverage_level == 5, 42);
+        assert!(leverage_level == 50, 42);
+        assert!(user_paid_amount == 100_000_000, 42);
+        assert!(borrow_amount == 400_000_000, 42);
+        assert!(deposit_amount == 1000_000_000, 42);
         assert!(!is_closed, 42);
+        assert!(opened_at == 1704085200, 42);
+        assert!(closed_at == 0, 42);
+        assert!(interest_accrued_amount == 80000, 42);
 
         // assert coin amount in user account and contracts
         // lending contract borrows 4 move -> remain 6
@@ -97,6 +107,7 @@ module movarage::test_perp {
         //==================================================================
         //                      CLOSE POSITION
         //==================================================================
+        timestamp::update_global_time_for_test_secs(1704888000); // 9 days and 7h after opened position
         mosaic_caller::set_swap_rate<USDC, MoveCoin>(100); // 1 move = 1 USDC
         perp::close_position_with_mosaic<MoveCoin, USDC, USDC,
                                 USDC, MoveCoin,
@@ -109,29 +120,48 @@ module movarage::test_perp {
             vector::empty(), vector::empty(), vector::empty(),
             vector::empty(), vector::empty(), vector::empty(),
             signer::address_of(fee_recipient), 0,
-            1000_000_000, 400_000_000,
+            400_000_000,
             string::utf8(b"10"), string::utf8(b"10"),
         );
         // assert opened position data
         user_open_position_ids = perp::get_user_open_position_ids(signer::address_of(user));
         assert!(vector::length(&user_open_position_ids) == 0, 42);
+        user_closed_position_ids = perp::get_user_closed_position_ids(signer::address_of(user));
+        assert!(vector::length(&user_closed_position_ids) == 1, 42);
+        assert!(*vector::borrow(&user_closed_position_ids, 0) == 1, 42);
         (
+            _,
+            user_address,
             source_token_type_name, 
             target_token_type_name,
             leverage_level,
-            user_amount,
+            user_paid_amount,
+            borrow_amount,
+            deposit_amount,
             is_closed,
-        ) = perp::get_position_details(1);
+            opened_at,
+            closed_at,
+            _,
+            _,
+        ) = perp::extract_position(perp::get_position_details(1));
+        assert!(user_address == signer::address_of(user), 42);
         assert!(source_token_type_name == type_info::type_name<MoveCoin>(), 42);
         assert!(target_token_type_name == type_info::type_name<USDC>(), 42);
-        assert!(leverage_level == 5, 42);
+        assert!(leverage_level == 50, 42);
+        assert!(user_paid_amount == 100_000_000, 42);
+        assert!(borrow_amount == 400_000_000, 42);
+        assert!(deposit_amount == 1000_000_000, 42);
         assert!(is_closed, 42);
+        assert!(opened_at == 1704085200, 42);
+        assert!(closed_at == 1704888000, 42);
 
         // assert coin amount in user account and contracts
         // lending contract: borrowed tokens has been paybacked -> 10 move 
         assert!(coin::balance<MoveCoin>(lending::get_resource_account_address()) == 1_000_000_000, 42);
-        // user: have more 5 move -> 7 move (2 initial move)
-        assert!(coin::balance<MoveCoin>(signer::address_of(user)) == 700_000_000, 42);
+        // user: have more 5 move -> 7 move (2 initial move) but need to subtract by borrow interst
+        let borrow_interest = 800_000; // interest of 9 days and 7h -> interest of 10 days
+        assert!(coin::balance<MoveCoin>(signer::address_of(user)) == 700_000_000 - borrow_interest, 42);
+        assert!(coin::balance<MoveCoin>(signer::address_of(interest_recipient)) == borrow_interest, 42);
         // perp: no token
         assert!(coin::balance<USDC>(perp::get_resource_account_address()) == 0, 42);
         assert!(coin::balance<MoveCoin>(perp::get_resource_account_address()) == 0, 42);
@@ -142,18 +172,24 @@ module movarage::test_perp {
         source: &signer,
         simple_lending: &signer,
         user: &signer,
+        interest_recipient: &signer,
     ) {
         account::create_account_for_test(signer::address_of(source));
         account::create_account_for_test(signer::address_of(simple_lending));
         account::create_account_for_test(signer::address_of(user));
+        account::create_account_for_test(signer::address_of(interest_recipient));
 
         init_coins(source);
 
         perp::initialize_for_test(source);
-        mosaic_caller::initialize_for_test(source);
-        lending::initialize_for_test(simple_lending);
+        perp::set_interest_recipient_for_test(source, signer::address_of(interest_recipient));
 
-        lending::add_address_to_whitelist(perp::get_resource_account_address());
+        mosaic_caller::initialize_for_test(source);
+
+        lending::initialize_for_test(simple_lending);
+        lending::add_address_to_whitelist(simple_lending, perp::get_resource_account_address());
+
+        timestamp::set_time_has_started_for_testing(aptos_framework);
     }
 
     fun init_coins(source: &signer) {

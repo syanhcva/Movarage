@@ -4,10 +4,11 @@ version = "1.0.0"
 authors = []
 
 [addresses]
-#router = "57b057e189f60ed079bbfe11b88b187cc6bea5016d1bc58aee5ec087f76ce44e"
-#executor = "57b057e189f60ed079bbfe11b88b187cc6bea5016d1bc58aee5ec087f76ce44e"
-mosaic = "0xe7d668e27e18fa54a50a6dac99e596f8bc2539ebfbf93e68700100dea2062b19"
-executor = "0xe7d668e27e18fa54a50a6dac99e596f8bc2539ebfbf93e68700100dea2062b19"
+#mosaic = "0xe7d668e27e18fa54a50a6dac99e596f8bc2539ebfbf93e68700100dea2062b19"
+#executor = "0xe7d668e27e18fa54a50a6dac99e596f8bc2539ebfbf93e68700100dea2062b19"
+
+mosaic = "0xa1e1a0d720075680e9840f6a8d5c090fd33c9f64bf7e7729029f342ee6875468"
+executor = "0xa1e1a0d720075680e9840f6a8d5c090fd33c9f64bf7e7729029f342ee6875468"
 
 [dependencies]
 AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework", rev = "mainnet" }

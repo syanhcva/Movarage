@@ -1,4 +1,4 @@
-module aggregator_caller::mosaic {
+module movarage::mosaic_caller {
     friend movarage::perp;
 
     use std::vector;
@@ -23,6 +23,11 @@ module aggregator_caller::mosaic {
         amount_out_usd: String,
     ): u64 {
         use mosaic::router;
+        let empty_path =  vector::empty<u64>();
+        vector::push_back(&mut empty_path, 0);
+        vector::push_back(&mut empty_path, 0);
+        vector::push_back(&mut empty_path, 0);
+        vector::push_back(&mut empty_path, 0);
 
         return router::swap_generic_public<X, Y, Z,
                                             P1H1, P1H2, P2H1, P2H2, P3H1, P3H2,
@@ -35,17 +40,17 @@ module aggregator_caller::mosaic {
             path_1_1, path_1_2, path_1_3,
             path_2_1, path_2_2, path_2_3,
             path_3_1, path_3_2, path_3_3,
-            vector::empty(), vector::empty(), vector::empty(),
-            vector::empty(), vector::empty(), vector::empty(),
-            vector::empty(), vector::empty(), vector::empty(),
-            vector::empty(), vector::empty(), vector::empty(),
-            vector::empty(), vector::empty(), vector::empty(),
-            vector::empty(), vector::empty(), vector::empty(),
-            vector::empty(), vector::empty(), vector::empty(),
-            vector::empty(), vector::empty(), vector::empty(),
-            vector::empty(), vector::empty(), vector::empty(),
-            vector::empty(), vector::empty(), vector::empty(),
-            vector::empty(), vector::empty(), vector::empty(),
+            empty_path, empty_path, empty_path,
+            empty_path, empty_path, empty_path,
+            empty_path, empty_path, empty_path,
+            empty_path, empty_path, empty_path,
+            empty_path, empty_path, empty_path,
+            empty_path, empty_path, empty_path,
+            empty_path, empty_path, empty_path,
+            empty_path, empty_path, empty_path,
+            empty_path, empty_path, empty_path,
+            empty_path, empty_path, empty_path,
+            empty_path, empty_path, empty_path,
             fee_recipient, fee_in_bps,
             amount_in, min_amount_out,
             amount_in_usd, amount_out_usd,
