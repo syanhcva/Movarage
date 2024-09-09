@@ -3,7 +3,7 @@ module mosaic::router {
 
     const E_NOT_IMPLEMENTED : u64 = 0;
 
-    public fun swap_generic_v4<X, Y, Z,
+    public fun swap_generic_public<X, Y, Z,
                               P1H1, P1H2, P2H1, P2H2, P3H1, P3H2, P4H1, P4H2, P5H1, P5H2,
                               P6H1, P6H2, P7H1, P7H2, P8H1, P8H2, P9H1, P9H2, P10H1, P10H2,
                               P11H1, P11H2, P12H1, P12H2, P13H1, P13H2, P14H1, P14H2
@@ -29,7 +29,7 @@ module mosaic::router {
         min_amount_out: u64,
         amount_in_usd: String,
         amount_out_usd: String,
-    ) {
+    ): u64 {
         abort E_NOT_IMPLEMENTED
     }
 }

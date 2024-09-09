@@ -5,7 +5,6 @@ authors = []
 
 [addresses]
 movarage = "_"
-aggregator_caller = "_"
 
 [dev-addresses]
 
