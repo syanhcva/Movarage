@@ -15,3 +15,5 @@ aptos move deploy-object --address-name simple_lending --profile default-movemen
 ```sh
 aptos move upgrade-object --address-name simple_lending --object-address 0xa0fd52f02567234b1a743e823214c81d659090de1eb3da5e305114fdaa76159e --profile default-movement-aptos --included-artifacts none --skip-fetch-latest-git-deps --assume-yes
 ```
+
+- Resource account: 0x4eeffad0f15f3265cae46463b776ddf148555b7f292924014c11efbf3dba37a4

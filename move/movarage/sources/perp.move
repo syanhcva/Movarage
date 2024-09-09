@@ -25,7 +25,7 @@ module movarage::perp {
         // e.g. 1 -> 10, 1.5 -> 15, 5 -> 50
         min_levarage_level: u16,
         max_leverage_level: u16,
-        daily_interest_bips: u32,
+        daily_interest_bips: u32, // 1000 bips = 1%
         liquidation_ltv: u16,
         interest_recipient: address,
     }
@@ -44,6 +44,8 @@ module movarage::perp {
         is_closed: bool,
         opened_at: u64, // timestamp in seconds
         closed_at: u64, // timestamp in seconds
+        interest_calculation_from: u64, // timestamp in seconds
+        collected_interest_amount: u64,
     }
 
     struct UserPositions has store {
@@ -92,6 +94,7 @@ module movarage::perp {
     const E_CLOSED_POSITION: u64 = 7;
     const E_MISMATCH_SOURCE_TOKEN_TYPE: u64 = 8;
     const E_MISMATCH_TARGET_TOKEN_TYPE: u64 = 9;
+    const E_LIQUIDATION_LTV_NOT_REACH: u64 = 9;
 
     const BIPS_PER_1_PERCENT: u64 = 1000;
     const SECONDS_PER_DAY: u64 = 86400;
@@ -155,7 +158,7 @@ module movarage::perp {
             borrow_lending<SourceToken>(perp_config, source_token_amount_to_borrow);
         };
 
-        // transfer source token to contract vault
+        // transfer source token from user to contract vault
         aptos_account::transfer_coins<SourceToken>(sender, account::get_signer_capability_address(&perp_config.resource_signer_cap), user_pay_amount);
 
         // swap source token to target token (result in contract vault)
@@ -176,6 +179,7 @@ module movarage::perp {
         let positions_store = borrow_global_mut<PositionsStore>(@movarage);
         let sender_address = signer::address_of(sender);
         let position_id = positions_store.next_position_id;
+        let now_seconds = timestamp::now_seconds();
         let position = Position {
             id: position_id,
             user_address: sender_address,
@@ -188,8 +192,10 @@ module movarage::perp {
             entry_price: calculate_exchange_price<TargetToken>(source_token_amount_to_swap, swapped_target_token_amount),
             closed_price: 0,
             is_closed: false,
-            opened_at: timestamp::now_seconds(),
+            opened_at: now_seconds,
             closed_at: 0,
+            collected_interest_amount: 0,
+            interest_calculation_from: now_seconds, 
         };
         table::add(&mut positions_store.positions, position_id, position);
         positions_store.next_position_id = positions_store.next_position_id + 1;
@@ -217,8 +223,60 @@ module movarage::perp {
             borrow_amount: position.borrow_amount,
             deposit_amount: position.deposit_amount,
             entry_price: position.entry_price,
-            opened_at: position.opened_at,            
+            opened_at: position.opened_at,
         });
+    }
+
+    public entry fun modify_position<SourceToken>(
+        sender: &signer, 
+        position_id: u64,
+        new_leverage_level: u16,
+    ) acquires PerpConfig, PositionsStore {
+        let perp_config = borrow_global_mut<PerpConfig>(@movarage);
+
+        assert!(new_leverage_level >= perp_config.min_levarage_level, E_INVALID_LEVERAGE_LEVEL);
+        assert!(new_leverage_level <= perp_config.max_leverage_level, E_INVALID_LEVERAGE_LEVEL);
+
+        let positions = &mut borrow_global_mut<PositionsStore>(@movarage).positions;
+        let position = table::borrow_mut(positions, position_id);
+        assert!(!position.is_closed, E_CLOSED_POSITION);
+
+        let sender_address = signer::address_of(sender);
+        assert!(sender_address == position.user_address, E_NOT_OWNER_POSITION);
+
+        if (new_leverage_level == position.leverage_level) return;
+
+        let total_amount = position.user_paid_amount + position.borrow_amount;
+        let new_user_paid_amount = total_amount * ((new_leverage_level as u64) - 10) / 10;
+        let now_seconds = timestamp::now_seconds();
+        let interest_accrued_amount = calculate_interest_amount(
+            now_seconds - position.interest_calculation_from, 
+            perp_config.daily_interest_bips,
+            position.borrow_amount,
+        );
+
+        if (new_user_paid_amount > position.user_paid_amount) {
+            let user_paid_amount_more = new_user_paid_amount - position.user_paid_amount;
+            aptos_account::transfer_coins<SourceToken>(
+                sender, 
+                account::get_signer_capability_address(&perp_config.resource_signer_cap), 
+                user_paid_amount_more + interest_accrued_amount,
+            );
+            payback_lending<SourceToken>(perp_config, user_paid_amount_more);
+        } else {
+            let user_borrow_amount_more = position.user_paid_amount - new_user_paid_amount;
+            let resource_signer_cap = &perp_config.resource_signer_cap;
+            let resource_signer = account::create_signer_with_capability(resource_signer_cap);
+
+            aptos_account::transfer_coins<SourceToken>(&resource_signer, signer::address_of(sender), user_borrow_amount_more);
+            aptos_account::transfer_coins<SourceToken>(sender, perp_config.interest_recipient, interest_accrued_amount);
+            borrow_lending<SourceToken>(perp_config, user_borrow_amount_more);
+        };
+
+        position.user_paid_amount = new_user_paid_amount;
+        position.borrow_amount = total_amount - new_user_paid_amount;
+        position.collected_interest_amount = interest_accrued_amount;
+        position.interest_calculation_from = now_seconds;
     }
 
     public entry fun close_position_with_mosaic<SourceToken, TargetToken, Z,
@@ -267,7 +325,108 @@ module movarage::perp {
         let user_remaining_source_token_amount: u64 = 0;
         let source_token_amount_to_payback: u64 = 0;
         let now_seconds = timestamp::now_seconds();
-        let interest_accrued_amount: u64 = calculate_interest_amount(
+        let interest_accrued_amount: u64 = 0;
+
+        if (swapped_source_token_amount >= position.borrow_amount) {
+            source_token_amount_to_payback = position.borrow_amount;
+            user_remaining_source_token_amount = swapped_source_token_amount - position.borrow_amount;
+
+            interest_accrued_amount = calculate_interest_amount(
+                now_seconds - position.interest_calculation_from,
+                perp_config.daily_interest_bips,
+                position.borrow_amount,
+            );
+            if (user_remaining_source_token_amount <= interest_accrued_amount) {
+                interest_accrued_amount = user_remaining_source_token_amount;
+                user_remaining_source_token_amount = 0;
+            } else {
+                user_remaining_source_token_amount = user_remaining_source_token_amount - interest_accrued_amount;
+            }
+        } else {
+            source_token_amount_to_payback = swapped_source_token_amount;
+        };
+
+        if (source_token_amount_to_payback > 0) {
+            payback_lending<SourceToken>(perp_config, source_token_amount_to_payback);
+        };
+
+        let resource_signer_cap = &perp_config.resource_signer_cap;
+        let resource_signer = account::create_signer_with_capability(resource_signer_cap);
+
+        if (interest_accrued_amount > 0) {
+            aptos_account::transfer_coins<SourceToken>(&resource_signer, perp_config.interest_recipient, interest_accrued_amount);
+        };
+
+        if (user_remaining_source_token_amount > 0) {
+            aptos_account::transfer_coins<SourceToken>(&resource_signer, position.user_address, user_remaining_source_token_amount);
+        };
+
+        // update data
+        let position_mut = table::borrow_mut(&mut positions_store.positions, position_id);
+        position_mut.is_closed = true;
+        position_mut.closed_at = now_seconds;
+        position_mut.closed_price = calculate_exchange_price<TargetToken>(swapped_source_token_amount, position_mut.deposit_amount);
+        position_mut.collected_interest_amount = position_mut.collected_interest_amount + interest_accrued_amount;
+
+        let users_positions = &mut positions_store.users_positions;
+        if (table::contains(users_positions, sender_address)) {
+            let user_positions = table::borrow_mut(users_positions, sender_address);
+            vector::remove_value(&mut user_positions.open_position_ids, &position_id);
+            vector::push_back(&mut user_positions.closed_position_ids, position_id);
+        };
+
+        event::emit_event(&mut positions_store.position_close_events, PositionCloseEvent {
+            position_id: position_mut.id,
+            closed_price: position_mut.closed_price,
+            closed_at: position_mut.closed_at,
+        });
+    }
+
+    public entry fun liquidate_position<SourceToken, TargetToken, Z,
+                                        P1H1, P1H2,
+                                        P2H1, P2H2,
+                                        P3H1, P3H2,
+    >(
+        sender: &signer,
+        position_id: u64,
+        path_1_1: vector<u64>, path_1_2: vector<u64>, path_1_3: vector<u64>,
+        path_2_1: vector<u64>, path_2_2: vector<u64>, path_2_3: vector<u64>,
+        path_3_1: vector<u64>, path_3_2: vector<u64>, path_3_3: vector<u64>,
+        min_amount_out: u64,
+        amount_in_usd: String,
+        amount_out_usd: String,
+    ) acquires PerpConfig, PositionsStore {
+        assert!(is_owner(sender), E_PERMISSION_DENIED);
+
+        let positions_store = borrow_global_mut<PositionsStore>(@movarage);
+        let positions = &positions_store.positions;
+
+        let position = table::borrow(positions, position_id);
+        assert!(!position.is_closed, E_CLOSED_POSITION);
+        assert!(position.source_token_type_name == type_info::type_name<SourceToken>(), E_MISMATCH_SOURCE_TOKEN_TYPE);
+        assert!(position.target_token_type_name == type_info::type_name<TargetToken>(), E_MISMATCH_TARGET_TOKEN_TYPE);
+
+        let perp_config = borrow_global<PerpConfig>(@movarage);
+        let swapped_source_token_amount = mosaic_caller::swap<
+            TargetToken, SourceToken, Z,
+            P1H1, P1H2, P2H1, P2H2, P3H1, P3H2,
+        >(
+            &account::create_signer_with_capability(&perp_config.resource_signer_cap),
+            path_1_1, path_1_2, path_1_3,
+            path_2_1, path_2_2, path_2_3,
+            path_3_1, path_3_2, path_3_3,
+            @movarage, 0, // TODO: no need to take fee in this case, should take liquidation fee
+            position.deposit_amount, min_amount_out,
+            amount_in_usd, amount_out_usd,
+        );
+
+        let ltv = calculate_ltv(position.borrow_amount, swapped_source_token_amount);
+        assert!((ltv as u16) < perp_config.liquidation_ltv, E_LIQUIDATION_LTV_NOT_REACH);
+
+        let user_remaining_source_token_amount: u64 = 0;
+        let source_token_amount_to_payback: u64 = 0;
+        let now_seconds = timestamp::now_seconds();
+        let interest_accrued_amount = calculate_interest_amount(
             now_seconds - position.opened_at,
             perp_config.daily_interest_bips,
             position.borrow_amount,
@@ -308,8 +467,8 @@ module movarage::perp {
         position_mut.closed_price = calculate_exchange_price<TargetToken>(swapped_source_token_amount, position_mut.deposit_amount);
 
         let users_positions = &mut positions_store.users_positions;
-        if (table::contains(users_positions, sender_address)) {
-            let user_positions = table::borrow_mut(users_positions, sender_address);
+        if (table::contains(users_positions, position_mut.user_address)) {
+            let user_positions = table::borrow_mut(users_positions, position_mut.user_address);
             vector::remove_value(&mut user_positions.open_position_ids, &position_id);
             vector::push_back(&mut user_positions.closed_position_ids, position_id);
         };
@@ -317,8 +476,12 @@ module movarage::perp {
         event::emit_event(&mut positions_store.position_close_events, PositionCloseEvent {
             position_id: position_mut.id,
             closed_price: position_mut.closed_price,
-            closed_at: position_mut.closed_at,            
+            closed_at: position_mut.closed_at,
         });
+    }
+
+    fun calculate_ltv(borrow_amount: u64, total_amount: u64): u64 {
+        return borrow_amount * 10_000 / total_amount
     }
 
     fun borrow_lending<Token>(perp_config: &PerpConfig, amount: u64) {
@@ -441,6 +604,15 @@ module movarage::perp {
 
         let position = table::borrow(positions, position_id);
         let daily_interest_bips = borrow_global<PerpConfig>(@movarage).daily_interest_bips;
+        let interest_accrued_amount = if (position.is_closed) {
+            position.collected_interest_amount
+        } else {
+            position.collected_interest_amount + calculate_interest_amount(
+                timestamp::now_seconds() - position.interest_calculation_from,
+                daily_interest_bips,
+                position.borrow_amount,
+            )
+        };
 
         return PositionView {
             id: position.id,
@@ -457,11 +629,7 @@ module movarage::perp {
             opened_at: position.opened_at,
             closed_at: position.closed_at,
             daily_interest_bips: daily_interest_bips,
-            interest_accrued_amount: calculate_interest_amount(
-                timestamp::now_seconds() - position.opened_at,
-                daily_interest_bips,
-                position.borrow_amount,
-            ),
+            interest_accrued_amount: interest_accrued_amount,
         }
     }
 

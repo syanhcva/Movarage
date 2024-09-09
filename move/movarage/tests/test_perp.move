@@ -127,7 +127,7 @@ module movarage::test_perp {
             400_000_000,
             string::utf8(b"10"), string::utf8(b"10"),
         );
-        // assert opened position data
+        // assert closed position data
         user_open_position_ids = perp::get_user_open_position_ids(signer::address_of(user));
         assert!(vector::length(&user_open_position_ids) == 0, 42);
         user_closed_position_ids = perp::get_user_closed_position_ids(signer::address_of(user));
@@ -170,6 +170,93 @@ module movarage::test_perp {
         let borrow_interest = 800_000; // interest of 9 days and 7h -> interest of 10 days
         assert!(coin::balance<MoveCoin>(signer::address_of(user)) == 700_000_000 - borrow_interest, 42);
         assert!(coin::balance<MoveCoin>(signer::address_of(interest_recipient)) == borrow_interest, 42);
+        // perp: no token
+        assert!(coin::balance<USDC>(perp::get_resource_account_address()) == 0, 42);
+        assert!(coin::balance<MoveCoin>(perp::get_resource_account_address()) == 0, 42);
+    }
+
+    #[test(aptos_framework = @aptos_framework, source = @movarage, simple_lending = @simple_lending, user = @0x100, fee_recipient = @0x101, interest_recipient = @102)]
+    public fun test_close_position_swapped_source_token_amount_less_than_initial_amount(
+        aptos_framework: &signer, 
+        source: &signer,
+        simple_lending: &signer,
+        user: &signer,
+        fee_recipient: &signer,
+        interest_recipient: &signer,
+    ) acquires CoinsCap {
+        setup_test(aptos_framework, source, simple_lending, user, interest_recipient);
+
+        mint_move_to_account(&lending::get_resource_signer(), 1_000_000_000); // 10 move
+        mint_move_to_account(user, 200_000_000); // 2 move
+        mint_usdc_to_account(&mosaic_caller::get_resource_signer(), 2_000_000_000); // 20 USDC
+        mint_move_to_account(&mosaic_caller::get_resource_signer(), 1_000_000_000); // 10 move
+        mosaic_caller::set_swap_rate<MoveCoin, USDC>(200); // 1 move = 2 USDC
+
+        //==================================================================
+        //                      OPEN POSITION
+        //==================================================================
+        timestamp::update_global_time_for_test_secs(1704085200);
+        perp::open_position_with_mosaic<MoveCoin, USDC, USDC,
+                                        MoveCoin, USDC,
+                                        MoveCoin, USDC,
+                                        MoveCoin, USDC,
+        >(
+            user,
+            100_000_000, // 1 move
+            50, // x5
+            vector::empty(), vector::empty(), vector::empty(),
+            vector::empty(), vector::empty(), vector::empty(),
+            vector::empty(), vector::empty(), vector::empty(),
+            signer::address_of(fee_recipient), 0,
+            400_000_000,
+            string::utf8(b"10"), string::utf8(b"10"),
+        );
+
+        //==================================================================
+        //                      CLOSE POSITION
+        //==================================================================
+        timestamp::update_global_time_for_test_secs(1704888000); // 9 days and 7h after opened position
+        mosaic_caller::set_swap_rate<USDC, MoveCoin>(20); // 1 move = 5 USDC -> swapped value is 2 move
+        perp::close_position_with_mosaic<MoveCoin, USDC, USDC,
+                                USDC, MoveCoin,
+                                USDC, MoveCoin,
+                                USDC, MoveCoin,
+        >(
+            user,
+            1,
+            vector::empty(), vector::empty(), vector::empty(),
+            vector::empty(), vector::empty(), vector::empty(),
+            vector::empty(), vector::empty(), vector::empty(),
+            signer::address_of(fee_recipient), 0,
+            400_000_000,
+            string::utf8(b"10"), string::utf8(b"10"),
+        );
+        // assert closed position data
+        let user_open_position_ids = perp::get_user_open_position_ids(signer::address_of(user));
+        assert!(vector::length(&user_open_position_ids) == 0, 42);
+        let user_closed_position_ids = perp::get_user_closed_position_ids(signer::address_of(user));
+        assert!(vector::length(&user_closed_position_ids) == 1, 42);
+        assert!(*vector::borrow(&user_closed_position_ids, 0) == 1, 42);
+        let (
+            _, _, _, _, _, _, _, _, _,
+            closed_price,
+            is_closed,
+            _,
+            closed_at,
+            _,
+            interest_accrued_amount,
+        ) = perp::extract_position(perp::get_position_details(1));
+        assert!(closed_price == 20_000_000, 42);
+        assert!(is_closed, 42);
+        assert!(closed_at == 1704888000, 42);
+        assert!(interest_accrued_amount == 0, 42);
+
+        // assert coin amount in user account and contracts
+        // because swapping token backend returns only 2 move (intial amount is 5 move)
+        // -> payback 2 move to lending contract, return 0 move to the user and interest amount = 0
+        assert!(coin::balance<MoveCoin>(lending::get_resource_account_address()) == 800_000_000, 42);
+        assert!(coin::balance<MoveCoin>(signer::address_of(user)) == 100_000_000, 42);
+        assert!(coin::balance<MoveCoin>(signer::address_of(interest_recipient)) == 0, 42);
         // perp: no token
         assert!(coin::balance<USDC>(perp::get_resource_account_address()) == 0, 42);
         assert!(coin::balance<MoveCoin>(perp::get_resource_account_address()) == 0, 42);
