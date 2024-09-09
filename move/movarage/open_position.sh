@@ -1,4 +1,4 @@
-aptos move run --function-id 0xb5007510855e91801193d872f628060fbfae8551f00f0eb97dbade027ecae947::perp::open_position_with_mosaic --profile default-movement-aptos \
+aptos move run --function-id 0xbf01e2efe85ce75b15c6378483b7f9c0c497a48dd57a559182ebb4388b5e91ce::perp::open_position_with_mosaic --profile default-movement-aptos \
     --type-args \
         "0x1::aptos_coin::AptosCoin" \
         "0x275f508689de8756169d1ee02d889c777de1cebda3a7bbcce63ba8a27c563c6f::tokens::USDC" \
