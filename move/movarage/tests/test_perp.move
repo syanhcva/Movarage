@@ -77,6 +77,8 @@ module movarage::test_perp {
             user_paid_amount,
             borrow_amount,
             deposit_amount,
+            entry_price,
+            closed_price,
             is_closed,
             opened_at,
             closed_at,
@@ -90,6 +92,8 @@ module movarage::test_perp {
         assert!(user_paid_amount == 100_000_000, 42);
         assert!(borrow_amount == 400_000_000, 42);
         assert!(deposit_amount == 1000_000_000, 42);
+        assert!(entry_price == 50_000_000, 42);
+        assert!(closed_price == 0, 42);
         assert!(!is_closed, 42);
         assert!(opened_at == 1704085200, 42);
         assert!(closed_at == 0, 42);
@@ -138,6 +142,8 @@ module movarage::test_perp {
             user_paid_amount,
             borrow_amount,
             deposit_amount,
+            entry_price,
+            closed_price,
             is_closed,
             opened_at,
             closed_at,
@@ -151,6 +157,8 @@ module movarage::test_perp {
         assert!(user_paid_amount == 100_000_000, 42);
         assert!(borrow_amount == 400_000_000, 42);
         assert!(deposit_amount == 1000_000_000, 42);
+        assert!(entry_price == 50_000_000, 42);
+        assert!(closed_price == 100_000_000, 42);
         assert!(is_closed, 42);
         assert!(opened_at == 1704085200, 42);
         assert!(closed_at == 1704888000, 42);

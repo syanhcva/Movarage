@@ -34,8 +34,10 @@ aptos move compile --named-addresses movarage=0x47a117902a908386980b03ebcbbe4f8e
 
 ```sh
 aptos move deploy-object --address-name movarage --profile default-movement-aptos --included-artifacts none
+
+aptos move deploy-object --address-name movarage --profile default-movement-aptos --included-artifacts none --assume-yes
 ```
 
 ```sh
-aptos move upgrade-object --address-name movarage --object-address 0xb5007510855e91801193d872f628060fbfae8551f00f0eb97dbade027ecae947 --profile default-movement-aptos --included-artifacts none --skip-fetch-latest-git-deps --assume-yes
+aptos move upgrade-object --address-name movarage --object-address 0xbf01e2efe85ce75b15c6378483b7f9c0c497a48dd57a559182ebb4388b5e91ce --profile default-movement-aptos --included-artifacts none --skip-fetch-latest-git-deps --assume-yes
 ```

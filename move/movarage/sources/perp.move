@@ -1,14 +1,16 @@
 module movarage::perp {
     use std::error;
+    use std::math128;
     use std::signer;
     use std::vector;
-    use std::string::{Self, String};
+    use std::string::{String};
     use std::timestamp;
 
     use aptos_std::table::{Self, Table};
 
     use aptos_framework::aptos_account;
     use aptos_framework::account::{Self, SignerCapability};
+    use aptos_framework::coin;
     use aptos_framework::event::{Self, EventHandle};
     use aptos_framework::object::{Self, ObjectCore};
     use aptos_framework::type_info;
@@ -37,6 +39,8 @@ module movarage::perp {
         user_paid_amount: u64,
         borrow_amount: u64,
         deposit_amount: u64,
+        entry_price: u64,
+        closed_price: u64,
         is_closed: bool,
         opened_at: u64, // timestamp in seconds
         closed_at: u64, // timestamp in seconds
@@ -52,6 +56,29 @@ module movarage::perp {
         positions: Table<u64, Position>, // key is position ID
         // use for client to query open positions of user more convenient
         users_positions: Table<address, UserPositions>,
+        position_open_events: EventHandle<PositionOpenEvent>,
+        position_close_events: EventHandle<PositionCloseEvent>,
+    }
+
+    #[event]
+    struct PositionOpenEvent has drop, store {
+        position_id: u64,
+        user_address: address,
+        source_token_type_name: String,
+        target_token_type_name: String,
+        leverage_level: u16,
+        user_paid_amount: u64,
+        borrow_amount: u64,
+        deposit_amount: u64,
+        entry_price: u64,
+        opened_at: u64,
+    }
+
+    #[event]
+    struct PositionCloseEvent has drop, store {
+        position_id: u64,
+        closed_price: u64,
+        closed_at: u64,
     }
 
     const RESOURCE_ACCOUNT_SEED: vector<u8> = b"leverage";
@@ -72,7 +99,7 @@ module movarage::perp {
     fun init_module(owner: &signer) {
         let (_, resource_signer_cap) = account::create_resource_account(owner, RESOURCE_ACCOUNT_SEED);
 
-        move_to(owner, PerpConfig{
+        move_to(owner, PerpConfig {
             resource_signer_cap: resource_signer_cap,
             min_levarage_level: 10,
             max_leverage_level: 50,
@@ -82,10 +109,12 @@ module movarage::perp {
             interest_recipient: @movarage,
         });
 
-        move_to(owner, PositionsStore{
+        move_to(owner, PositionsStore {
             next_position_id: 1,
             positions: table::new<u64, Position>(),
             users_positions: table::new<address, UserPositions>(),
+            position_open_events: new_event_handle<PositionOpenEvent>(owner),
+            position_close_events: new_event_handle<PositionCloseEvent>(owner),
         });
     }
 
@@ -144,9 +173,9 @@ module movarage::perp {
         );
 
         // save data
-        let position_store = borrow_global_mut<PositionsStore>(@movarage);
+        let positions_store = borrow_global_mut<PositionsStore>(@movarage);
         let sender_address = signer::address_of(sender);
-        let position_id = position_store.next_position_id;
+        let position_id = positions_store.next_position_id;
         let position = Position {
             id: position_id,
             user_address: sender_address,
@@ -156,14 +185,16 @@ module movarage::perp {
             user_paid_amount: user_pay_amount,
             deposit_amount: swapped_target_token_amount,
             borrow_amount: source_token_amount_to_borrow,
+            entry_price: calculate_exchange_price<TargetToken>(source_token_amount_to_swap, swapped_target_token_amount),
+            closed_price: 0,
             is_closed: false,
             opened_at: timestamp::now_seconds(),
             closed_at: 0,
         };
-        table::add(&mut position_store.positions, position_id, position);
-        position_store.next_position_id = position_store.next_position_id + 1;
+        table::add(&mut positions_store.positions, position_id, position);
+        positions_store.next_position_id = positions_store.next_position_id + 1;
 
-        let users_positions = &mut position_store.users_positions;
+        let users_positions = &mut positions_store.users_positions;
         if (table::contains(users_positions, sender_address)) {
             let user_positions = table::borrow_mut(users_positions, sender_address);
             vector::push_back(&mut user_positions.open_position_ids, position_id);
@@ -174,9 +205,20 @@ module movarage::perp {
                 open_position_ids: open_position_ids,
                 closed_position_ids: vector::empty(),
             });
-        }
+        };
 
-        // TODO: emit event
+        event::emit_event(&mut positions_store.position_open_events, PositionOpenEvent {
+            position_id: position.id,
+            user_address: position.user_address,
+            source_token_type_name: position.source_token_type_name,
+            target_token_type_name: position.target_token_type_name,
+            leverage_level: position.leverage_level,
+            user_paid_amount: position.user_paid_amount,
+            borrow_amount: position.borrow_amount,
+            deposit_amount: position.deposit_amount,
+            entry_price: position.entry_price,
+            opened_at: position.opened_at,            
+        });
     }
 
     public entry fun close_position_with_mosaic<SourceToken, TargetToken, Z,
@@ -263,6 +305,7 @@ module movarage::perp {
         let position_mut = table::borrow_mut(&mut positions_store.positions, position_id);
         position_mut.is_closed = true;
         position_mut.closed_at = now_seconds;
+        position_mut.closed_price = calculate_exchange_price<TargetToken>(swapped_source_token_amount, position_mut.deposit_amount);
 
         let users_positions = &mut positions_store.users_positions;
         if (table::contains(users_positions, sender_address)) {
@@ -271,7 +314,11 @@ module movarage::perp {
             vector::push_back(&mut user_positions.closed_position_ids, position_id);
         };
 
-        // TODO: emit event
+        event::emit_event(&mut positions_store.position_close_events, PositionCloseEvent {
+            position_id: position_mut.id,
+            closed_price: position_mut.closed_price,
+            closed_at: position_mut.closed_at,            
+        });
     }
 
     fun borrow_lending<Token>(perp_config: &PerpConfig, amount: u64) {
@@ -294,12 +341,26 @@ module movarage::perp {
         return borrow_amount * interest_accrued_day * (daily_interest_bips as u64) / BIPS_PER_1_PERCENT / 100
     }
 
+    fun calculate_exchange_price<QuoteToken>(base_token_amount: u64, quote_token_amount: u64): u64 {
+        let quote_token_decimals = (coin::decimals<QuoteToken>() as u128);
+        // use u128 to avoid overflow value of u64
+        return (((base_token_amount as u128) * (math128::pow(10, quote_token_decimals)) / (quote_token_amount as u128)) as u64)
+    }
+
     fun is_owner(sender: &signer): bool {
         if (object::object_exists<ObjectCore>(@movarage)) {
             let object = object::address_to_object<ObjectCore>(@movarage);
             return object::is_owner(object, signer::address_of(sender))
         } else {
             return signer::address_of(sender) == @movarage
+        }
+    }
+
+    fun new_event_handle<T: store + drop>(owner: &signer): EventHandle<T> {
+        if (object::is_object(signer::address_of(owner))) {
+            return object::new_event_handle<T>(owner)
+        } else {
+            return account::new_event_handle<T>(owner)
         }
     }
 
@@ -320,6 +381,8 @@ module movarage::perp {
         user_paid_amount: u64,
         borrow_amount: u64,
         deposit_amount: u64,
+        entry_price: u64,
+        closed_price: u64,
         is_closed: bool,
         opened_at: u64, // timestamp in seconds
         closed_at: u64, // timestamp in seconds
@@ -388,6 +451,8 @@ module movarage::perp {
             user_paid_amount: position.user_paid_amount,
             borrow_amount: position.borrow_amount,
             deposit_amount: position.deposit_amount,
+            entry_price: position.entry_price,
+            closed_price: position.closed_price,
             is_closed: position.is_closed,
             opened_at: position.opened_at,
             closed_at: position.closed_at,
@@ -418,7 +483,7 @@ module movarage::perp {
 
     #[test_only]
     public fun extract_position(position: PositionView): (
-        u64, address, String, String, u16, u64, u64, u64, bool, u64, u64, u32, u64
+        u64, address, String, String, u16, u64, u64, u64, u64, u64, bool, u64, u64, u32, u64
     ) {
         return (
             position.id,
@@ -429,6 +494,8 @@ module movarage::perp {
             position.user_paid_amount,
             position.borrow_amount,
             position.deposit_amount,
+            position.entry_price,
+            position.closed_price,
             position.is_closed,
             position.opened_at,
             position.closed_at,
