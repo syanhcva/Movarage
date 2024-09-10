@@ -13,7 +13,7 @@
 ```sh
 aptos move compile --named-addresses movarage=0x0,simple_lending=0x200
 # or run without fetch git deps to speed up process
-aptos move test --named-addresses movarage=0x0,simple_lending=0x200 --skip-fetch-latest-git-deps
+aptos move compile --named-addresses movarage=0x0,simple_lending=0x200 --skip-fetch-latest-git-deps
 ```
 
 ### Running test
