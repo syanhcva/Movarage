@@ -17,9 +17,8 @@ module movarage::test_perp {
     
     struct USDC {}
 
-    struct CoinsCap has key {
-        move_mint_cap: MintCapability<MoveCoin>,
-        usdc_mint_cap: MintCapability<USDC>,
+    struct CoinCap<phantom CoinType> has key {
+        mint_cap: MintCapability<CoinType>,
     }
 
     #[test(aptos_framework = @aptos_framework, source = @movarage, simple_lending = @simple_lending, user = @0x100, fee_recipient = @0x101, interest_recipient = @102)]
@@ -30,7 +29,7 @@ module movarage::test_perp {
         user: &signer,
         fee_recipient: &signer,
         interest_recipient: &signer,
-    ) acquires CoinsCap {
+    ) acquires CoinCap {
         setup_test(aptos_framework, source, simple_lending, user, interest_recipient);
 
         mint_move_to_account(&lending::get_resource_signer(), 1_000_000_000); // 10 move
@@ -181,7 +180,7 @@ module movarage::test_perp {
         user: &signer,
         fee_recipient: &signer,
         interest_recipient: &signer,
-    ) acquires CoinsCap {
+    ) acquires CoinCap {
         setup_test(aptos_framework, source, simple_lending, user, interest_recipient);
 
         mint_move_to_account(&lending::get_resource_signer(), 1_000_000_000); // 10 move
@@ -268,7 +267,7 @@ module movarage::test_perp {
         user: &signer,
         fee_recipient: &signer,
         interest_recipient: &signer,
-    ) acquires CoinsCap {
+    ) acquires CoinCap {
         setup_test(aptos_framework, source, simple_lending, user, interest_recipient);
 
         mint_move_to_account(&lending::get_resource_signer(), 1_000_000_000); // 10 move
@@ -358,7 +357,7 @@ module movarage::test_perp {
         user: &signer,
         fee_recipient: &signer,
         interest_recipient: &signer,
-    ) acquires CoinsCap {
+    ) acquires CoinCap {
         setup_test(aptos_framework, source, simple_lending, user, interest_recipient);
 
         mint_move_to_account(&lending::get_resource_signer(), 1_000_000_000); // 10 move
@@ -448,7 +447,7 @@ module movarage::test_perp {
         user: &signer,
         fee_recipient: &signer,
         interest_recipient: &signer,
-    ) acquires CoinsCap {
+    ) acquires CoinCap {
         setup_test(aptos_framework, source, simple_lending, user, interest_recipient);
 
         mint_move_to_account(&lending::get_resource_signer(), 1_000_000_000); // 10 move
@@ -554,7 +553,7 @@ module movarage::test_perp {
         user: &signer,
         fee_recipient: &signer,
         interest_recipient: &signer,
-    ) acquires CoinsCap {
+    ) acquires CoinCap {
         setup_test(aptos_framework, source, simple_lending, user, interest_recipient);
 
         mint_move_to_account(&lending::get_resource_signer(), 1_000_000_000); // 10 move
@@ -629,16 +628,11 @@ module movarage::test_perp {
     }
 
     fun init_coins(source: &signer) {
-        let move_mint_cap = init_coin<MoveCoin>(source, string::utf8(b"Move Coin"), string::utf8(b"MOVE"));
-        let usdc_mint_cap = init_coin<USDC>(source, string::utf8(b"USDC"), string::utf8(b"USDC"));
-
-        move_to(source, CoinsCap {
-            move_mint_cap,
-            usdc_mint_cap,
-        });
+        init_coin<MoveCoin>(source, string::utf8(b"Move Coin"), string::utf8(b"MOVE"));
+        init_coin<USDC>(source, string::utf8(b"USDC"), string::utf8(b"USDC"));
     }
 
-    fun init_coin<CoinType>(source: &signer, name: String, symbol: String): MintCapability<CoinType> {
+    fun init_coin<CoinType>(source: &signer, name: String, symbol: String) {
         let (burn_cap, freeze_cap, mint_cap) = coin::initialize<CoinType>(
             source,
             name,
@@ -649,21 +643,25 @@ module movarage::test_perp {
         coin::destroy_burn_cap(burn_cap);
         coin::destroy_freeze_cap(freeze_cap);
 
-        return mint_cap
+        move_to(source, CoinCap<CoinType> {
+            mint_cap,
+        });
     }
 
-    fun mint_move_to_account(account: &signer, amount: u64) acquires CoinsCap {
-        mint_coins_to_account<MoveCoin>(account, amount, &borrow_global<CoinsCap>(@movarage).move_mint_cap);
+    fun mint_move_to_account(account: &signer, amount: u64) acquires CoinCap {
+        mint_coins_to_account<MoveCoin>(account, amount);
     }
 
-    fun mint_usdc_to_account(account: &signer, amount: u64) acquires CoinsCap {
-        mint_coins_to_account<USDC>(account, amount, &borrow_global<CoinsCap>(@movarage).usdc_mint_cap);
+    fun mint_usdc_to_account(account: &signer, amount: u64) acquires CoinCap {
+        mint_coins_to_account<USDC>(account, amount);
     }
 
-    fun mint_coins_to_account<CoinType>(account: &signer, amount: u64, mint_cap: &MintCapability<CoinType>) {
+    fun mint_coins_to_account<CoinType>(account: &signer, amount: u64) acquires CoinCap {
         if (!coin::is_account_registered<CoinType>(signer::address_of(account))) {
             coin::register<CoinType>(account);
         };
+
+        let mint_cap = &borrow_global<CoinCap<CoinType>>(@movarage).mint_cap;
 
         let coins = coin::mint<CoinType>(amount, mint_cap);
         coin::deposit(signer::address_of(account), coins);

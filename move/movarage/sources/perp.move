@@ -61,6 +61,33 @@ module movarage::perp {
         position_close_events: EventHandle<PositionCloseEvent>,
     }
 
+    /// User friendly struct for client to view leverage config.
+    struct LeverageConfigView {
+        min_levarage_level: u16,
+        max_leverage_level: u16,
+        daily_interest_bips: u32,
+        liquidation_ltv: u16,
+    }
+
+    /// User friendly struct for client to view position data.
+    struct PositionView has drop {
+        id: u64,
+        user_address: address,
+        source_token_type_name: String,
+        target_token_type_name: String,
+        leverage_level: u16,
+        user_paid_amount: u64,
+        borrow_amount: u64,
+        deposit_amount: u64,
+        entry_price: u64,
+        closed_price: u64,
+        is_closed: bool,
+        opened_at: u64, // timestamp in seconds
+        closed_at: u64, // timestamp in seconds
+        daily_interest_bips: u32,
+        interest_accrued_amount: u64,
+    }
+
     #[event]
     struct PositionOpenEvent has drop, store {
         position_id: u64,
@@ -485,6 +512,8 @@ module movarage::perp {
         });
     }
 
+    //----------------------------Internal methods-----------------------------
+
     fun calculate_ltv(borrow_amount: u64, total_amount: u64): u64 {
         return borrow_amount * 100 / total_amount
     }
@@ -533,30 +562,6 @@ module movarage::perp {
     }
 
     //---------------------------Views---------------------------
-    struct LeverageConfigView {
-        min_levarage_level: u16,
-        max_leverage_level: u16,
-        daily_interest_bips: u32,
-        liquidation_ltv: u16,
-    }
-
-    struct PositionView has drop {
-        id: u64,
-        user_address: address,
-        source_token_type_name: String,
-        target_token_type_name: String,
-        leverage_level: u16,
-        user_paid_amount: u64,
-        borrow_amount: u64,
-        deposit_amount: u64,
-        entry_price: u64,
-        closed_price: u64,
-        is_closed: bool,
-        opened_at: u64, // timestamp in seconds
-        closed_at: u64, // timestamp in seconds
-        daily_interest_bips: u32,
-        interest_accrued_amount: u64,
-    }
 
     #[view]
     public fun get_leverage_config(): LeverageConfigView acquires PerpConfig {
@@ -639,6 +644,7 @@ module movarage::perp {
     }
 
     //---------------------------Tests---------------------------
+
     #[test_only]
     public fun initialize_for_test(owner: &signer) {
         init_module(owner);
